@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Instance Monitoring</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { margin: 0; font-family: "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f1f5f9; }
+
+        .header { background: #1e293b; padding: 20px; text-align: center; font-size: 22px; font-weight: bold; border-bottom: 1px solid #334155; }
+
+        /* Layout for 3 Columns */
+        .main-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .instance-column {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 15px;
+            border: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .instance-header {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #334155;
+            margin-bottom: 5px;
+        }
+
+        .card {
+            background: #0f172a;
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .card h3 { margin: 0 0 5px 0; font-size: 14px; color: #94a3b8; }
+        .description { font-size: 11px; color: #64748b; margin-bottom: 5px; }
+        .value { font-size: 18px; font-weight: bold; }
+
+        .status-light { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .green { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+        .red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+
+        .footer { text-align: center; padding: 20px; color: #64748b; font-size: 13px; }
+        canvas { margin-top: 10px; max-height: 150px; }
+    </style>
+</head>
+<body>
+
+<div class="header">🚀 Cluster Monitoring Dashboard</div>
+
+<div class="main-grid" id="dashboardGrid">
+    <!-- Columns will be injected here by JavaScript -->
+</div>
+
+<div class="footer">
+    Auto refresh every 5 seconds | Last updated: <span id="time"></span>
+</div>
+
+<script>
+    const PORTS = [8081, 8082, 8083];
+    const charts = {}; // Store chart instances
+
+    // Initialize HTML Structure for each port
+    function initDashboard() {
+        const grid = document.getElementById('dashboardGrid');
+        grid.innerHTML = '';
+
+        PORTS.forEach(port => {
+            const col = document.createElement('div');
+            col.className = 'instance-column';
+            col.id = `col-${port}`;
+            col.innerHTML = `
+                <div class="instance-header">Port ${port} <span id="status-${port}"></span></div>
+
+                <div class="card">
+                    <h3>CPU Usage</h3>
+                    <div id="cpuValue-${port}" class="value">--</div>
+                    <canvas id="cpuChart-${port}"></canvas>
+                </div>
+
+                <div class="card">
+                    <h3>JVM Memory Used</h3>
+                    <div id="memoryValue-${port}" class="value">--</div>
+                    <canvas id="memoryChart-${port}"></canvas>
+                </div>
+
+                <div class="card"><h3>Heap Memory</h3><div id="heapValue-${port}" class="value">--</div></div>
+                <div class="card"><h3>Live Threads</h3><div id="threadsValue-${port}" class="value">--</div></div>
+                <div class="card"><h3>GC Count</h3><div id="gcCount-${port}" class="value">--</div></div>
+                <div class="card"><h3>HTTP Requests</h3><div id="httpRequests-${port}" class="value">--</div></div>
+                <div class="card"><h3>Load Avg</h3><div id="loadAvg-${port}" class="value">--</div></div>
+                <div class="card"><h3>Uptime</h3><div id="uptime-${port}" class="value">--</div></div>
+            `;
+            grid.appendChild(col);
+
+            // Initialize Charts for this port
+            charts[`cpu-${port}`] = new Chart(document.getElementById(`cpuChart-${port}`), {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'CPU %', data: [], borderColor: '#22c55e', tension: 0.4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { beginAtZero: true, max: 100 } } }
+            });
+
+            charts[`memory-${port}`] = new Chart(document.getElementById(`memoryChart-${port}`), {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Mem MB', data: [], borderColor: '#3b82f6', tension: 0.4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { beginAtZero: true } } }
+            });
+        });
+    }
+
+    function formatUptime(seconds) {
+        const hrs = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${hrs}h ${mins}m ${secs}s`;
+    }
+
+    async function updateDashboard() {
+        try {
+            // Fetch aggregated data from our Controller
+            const res = await fetch('/api/monitoring/all');
+            const data = await res.json();
+            const time = new Date().toLocaleTimeString();
+
+            data.forEach(instance => {
+                const port = instance.port;
+                const isUp = instance.status === "UP";
+
+                // Update Status Light
+                const statusEl = document.getElementById(`status-${port}`);
+                statusEl.innerHTML = isUp
+                    ? `<span class="status-light green"></span>`
+                    : `<span class="status-light red"></span>`;
+
+                // If down, dim the card slightly
+                document.getElementById(`col-${port}`).style.opacity = isUp ? "1" : "0.6";
+
+                // Update Text Values
+                document.getElementById(`cpuValue-${port}`).innerText = instance.cpu.toFixed(2) + " %";
+                document.getElementById(`memoryValue-${port}`).innerText = instance.memory.toFixed(2) + " MB";
+                document.getElementById(`heapValue-${port}`).innerText = instance.heap.toFixed(2) + " MB";
+                document.getElementById(`threadsValue-${port}`).innerText = instance.threads;
+                document.getElementById(`gcCount-${port}`).innerText = instance.gcCount;
+                document.getElementById(`httpRequests-${port}`).innerText = instance.httpReqs;
+                document.getElementById(`loadAvg-${port}`).innerText = instance.loadAvg.toFixed(2);
+                document.getElementById(`uptime-${port}`).innerText = formatUptime(instance.uptime);
+
+                // Update Charts
+                const cpuChart = charts[`cpu-${port}`];
+                const memChart = charts[`memory-${port}`];
+
+                cpuChart.data.labels.push(time);
+                cpuChart.data.datasets[0].data.push(instance.cpu);
+                memChart.data.labels.push(time);
+                memChart.data.datasets[0].data.push(instance.memory);
+
+                // Keep only last 10 points
+                if (cpuChart.data.labels.length > 10) {
+                    cpuChart.data.labels.shift();
+                    cpuChart.data.datasets[0].data.shift();
+                    memChart.data.labels.shift();
+                    memChart.data.datasets[0].data.shift();
+                }
+
+                cpuChart.update();
+                memChart.update();
+            });
+
+            document.getElementById("time").innerText = time;
+
+        } catch (error) {
+            console.error("Failed to fetch dashboard data", error);
+        }
+    }
+
+    // Start
+    initDashboard();
+    updateDashboard();
+    setInterval(updateDashboard, 5000);
+
+</script>
+
+</body>
+</html>
