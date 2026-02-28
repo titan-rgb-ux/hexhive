@@ -1,0 +1,4 @@
+[titan]
+titan1 ansible_host=172.31.42.10
+[qa]
+qa1 ansible_host=172.31.36.34

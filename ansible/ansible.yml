@@ -1,0 +1,57 @@
+---
+    - name: Deploy Flask Application
+      hosts: all
+      become: yes
+    
+      vars:
+        app_dir: /opt/flask_app
+        app_file: app.py
+        venv_dir: /opt/flask-venv
+        app_port: 5000
+    
+      tasks:
+    
+        - name: Update apt cache
+          apt:
+            update_cache: yes
+    
+        - name: Install Python and venv dependencies
+          apt:
+            name:
+              - python3
+              - python3-venv
+              - python3-full
+            state: present
+    
+        - name: Create Python virtual environment
+          command: python3 -m venv {{ venv_dir }}
+          args:
+            creates: "{{ venv_dir }}"
+    
+        - name: Install Flask inside virtual environment
+          pip:
+            name: flask
+            virtualenv: "{{ venv_dir }}"
+    
+        - name: Create application directory
+          file:
+            path: "{{ app_dir }}"
+            state: directory
+            mode: '0755'
+    
+        - name: Push Flask application file
+          copy:
+            src: "{{ app_file }}"
+            dest: "{{ app_dir }}/{{ app_file }}"
+            mode: '0755'
+    
+        - name: Kill application running on port {{ app_port }} (if any)
+          shell: fuser -k {{ app_port }}/tcp || true
+          ignore_errors: yes
+    
+        - name: Start Flask application using venv python
+          shell: |
+            nohup {{ venv_dir }}/bin/python {{ app_dir }}/{{ app_file }} \
+            > {{ app_dir }}/flask.log 2>&1 &
+          args:
+            chdir: "{{ app_dir }}"
